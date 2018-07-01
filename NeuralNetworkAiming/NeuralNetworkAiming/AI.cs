@@ -15,7 +15,7 @@ namespace AimingAI
         private float OldGradient;
         private float newStep;
         private float oldStep = 0.5f;
-        Random rnd;
+        Random rnd = new Random();
         public Neuron()
         {
             weight = rnd.Next(-10, 10);
@@ -26,6 +26,8 @@ namespace AimingAI
     {
         public NeuronLayer(int capacity) : base(capacity)
         {
+            for (int i = 0; i < capacity; i++)
+                Add(new Neuron());
         }
     }
     public class NeuralNetwork
@@ -36,7 +38,7 @@ namespace AimingAI
             neuronLayers = new List<NeuronLayer>();
             neuronLayers.Add(new NeuronLayer(EntryCount));
             for (int i = 0; i < MiddlyLayersCount; i++)
-                neuronLayers.Add(new NeuronLayer(EntryCount * i));
+                neuronLayers.Add(new NeuronLayer(EntryCount * (i+1)));
             neuronLayers.Add(new NeuronLayer(ExitCount));
         }
     }
