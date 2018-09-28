@@ -5,13 +5,12 @@ using System.Linq;
 
 namespace NeuralNetworkStuff
 {
-    public sealed class WeightRandomizer
+    public class WeightRandomizer
     {
         private static WeightRandomizer _rnd;
         private Random rnd = new System.Random();
         private static readonly object lockObj = new object();
-        public double NextDouble { get { return rnd.NextDouble() - rnd.NextDouble(); } }
-        public int NextInt { get { return rnd.Next(0, 200) - rnd.Next(0, 100); } }
+        public double NextWeight { get { return rnd.NextDouble(); } }
 
         public static WeightRandomizer Random
         {
@@ -24,81 +23,56 @@ namespace NeuralNetworkStuff
                 }
             }
         }
-        public WeightRandomizer()
-        {
-        }
     }
 
     public class Neuron
     {
-        public readonly double beta = (double)0.05;
+        public double bias = WeightRandomizer.Random.NextWeight;
         public double[] weights;
 
         public double net_sum;
         public double delta;
-        public double[] newGradient;
-        public double[] OldGradient;
-        public double[] newStep;
-        public double[] oldStep;
-        public double value;
+        public double prev_delta;
+        public double bias_delta;
+        public double bias_prevdelta;
+        public double activation;
+
 
         public Neuron(int neuronEntriesCount)
         {
-            newGradient = new double[neuronEntriesCount];
-            OldGradient = new double[neuronEntriesCount];
-            newStep = new double[neuronEntriesCount];
-            oldStep = new double[neuronEntriesCount];
-
-            for (int i = 0; i < oldStep.Length; i++)
-                oldStep[i] = 0.1f;
             weights = new double[neuronEntriesCount];
             RandomizeWeights();
         }
 
         public void RandomizeWeights()
         {
-
-            double w;
             for (int i = 0; i < weights.Length; i++)
-            {
-                w = WeightRandomizer.Random.NextInt;
-                weights[i] = w;
-            }
+                weights[i] = WeightRandomizer.Random.NextWeight;
         }
 
         public void processInput(IEnumerator input)
         {
             net_sum = 0;
+            IEnumerator neuronInput = input;
             int i = 0; double inputValue = 0;
-            while (input.MoveNext())
+            while (neuronInput.MoveNext())
             {
-                inputValue = input.Current.GetType() == typeof(Neuron) ? ((Neuron)input.Current).value : (double)input.Current;
+                inputValue = neuronInput.Current.GetType() == typeof(Neuron) ? ((Neuron)neuronInput.Current).activation : (double)neuronInput.Current;
                 net_sum += weights[i++] * inputValue;
             }
-            value = activationFunc(net_sum);
+            activation = activationFunc(net_sum + bias);
+            //activation = activationFunc(net_sum);
         }
 
-        // using bipolar sigmoid as activation function
+        // using sigmoid as activation function
         private double activationFunc(double x)
         {
-            if (x < -45.0) return 0.0;
-            else if (x > 45.0) return 1.0;
-            double result = (2f / (1 + (double)Math.Pow(Math.E, -beta * x))) - 1;
-            return result;
+            //if (x < -45.0) return 0.0;
+            //else if (x > 45.0) return 1.0;
+            //double result = 1f / (1 + (double)Math.Pow(Math.E, -x));
+            //return result;
+            return Math.Tanh(x);
         }
-
-        private double deriv_activeFunc()
-        {
-            double result = (beta / 2) * (1 + net_sum) * (1 - net_sum);
-            return result;
-        }
-
-        public void deltaCalc(double multiplier)
-        {
-            delta = (double)(deriv_activeFunc() * multiplier);
-        }
-
-
     }
 
     public class NeuronLayer : List<Neuron>
@@ -112,21 +86,29 @@ namespace NeuralNetworkStuff
 
     public class NeuralNetwork
     {
-        List<NeuronLayer> neuronLayers;
+        private double _learningRate;
+        private double _momentum;
+        private double _decay;
 
-        public NeuralNetwork(int EntryCount, int ExitCount, int[] MiddlyLayersMap)
+        public double LearningRate { get { return _learningRate; } }
+        public double Momentum { get { return _momentum; } }
+        public double Decay { get { return _decay; } }
+
+
+        List<NeuronLayer> neuronLayers;
+        public double mse = 0;
+
+        public NeuralNetwork(int[] LayersMap, double LearningRate, double Momentum, double Decay)
         {
+            _learningRate = LearningRate;
+            _momentum = Momentum;
+            _decay = Decay;
             neuronLayers = new List<NeuronLayer>();
-            neuronLayers.Add(new NeuronLayer(EntryCount, EntryCount));
-            int prevLayerNeuronsCount = EntryCount;
-            for (int i = 0; i < MiddlyLayersMap.Length; i++)
+            for (int i = 1; i < LayersMap.Length; i++)
             {
-                int NeuronsInLayer = MiddlyLayersMap[i];
-                neuronLayers.Add(new NeuronLayer(prevLayerNeuronsCount, NeuronsInLayer));
-                prevLayerNeuronsCount = NeuronsInLayer;
+                int NeuronsInLayer = LayersMap[i];
+                neuronLayers.Add(new NeuronLayer(LayersMap[i-1], NeuronsInLayer));
             }
-            if (ExitCount > 0)
-                neuronLayers.Add(new NeuronLayer(prevLayerNeuronsCount, ExitCount));
         }
 
         /// <summary>
@@ -134,7 +116,7 @@ namespace NeuralNetworkStuff
         /// </summary>
         /// <param name="Entries">entry items collection</param>
         /// <returns></returns>
-        public NeuronLayer ProcessData(IEnumerator Entries)
+        public NeuronLayer FeedForward(IEnumerator Entries)
         {
             foreach (NeuronLayer layer in neuronLayers)
             {
@@ -150,16 +132,79 @@ namespace NeuralNetworkStuff
             return neuronLayers.Last<NeuronLayer>();
         }
 
-        public void Learn(double[] LearningEntry, double[] ExpectedResult)
+        public double ErorrCost(double[] ExpectedResult)
         {
-            // Backward - Propagation 
+            double errorCostValue = 0;
+            NeuronLayer outputLayer = neuronLayers.Last<NeuronLayer>();
+            for (int i = 0; i < ExpectedResult.Length; i++)
+            {
+                errorCostValue += Math.Pow(outputLayer[i].activation - ExpectedResult[i],2);
+            }
+            return errorCostValue;
+        }
+
+        public void Train(double[][] LearningData, double[][] ExpectedResults, int MaxEpoches, float MSE)
+        {
+            var curMSE = 0d;
+            var epoch = 0;
+            do
+            {
+                for (int i = 0; i < LearningData.Length; i++)
+                {
+                    var inputs = LearningData[i].GetEnumerator();
+                    FeedForward(inputs);
+                    curMSE += ErorrCost(ExpectedResults[i]);
+                    BackProp(ExpectedResults[i]);
+                    UpdateWeights(inputs);
+                }
+                epoch++;
+                curMSE = curMSE / LearningData.Length;
+                if(epoch % 100 == 0)
+                    Console.WriteLine(String.Format("Epoch #{0};\t mse={1}",epoch, Math.Round(curMSE, 2)));
+            } while (epoch < MaxEpoches && curMSE > MSE);
+            Console.WriteLine(String.Format("Training result:\t epoch #{0};\t mse={1}", epoch, Math.Round(curMSE, 2)));
+        }
+
+        private void UpdateWeights(IEnumerator Inputs)
+        {
+            for (int i = 0; i < neuronLayers.Count; i++)
+            {
+                NeuronLayer processingLayer = neuronLayers[i];
+                double entry;
+                int j = 0;
+                while (Inputs.MoveNext())
+                {
+                    entry = Inputs.Current.GetType() == typeof(Neuron) ? ((Neuron)Inputs.Current).activation : (double)Inputs.Current;
+                    foreach (Neuron neuron in processingLayer)
+                    {
+                        neuron.weights[j] += _learningRate * neuron.delta * entry;
+                        neuron.weights[j] += _momentum * neuron.prev_delta;
+                        neuron.weights[j] -= _decay * neuron.weights[j];
+
+                        neuron.bias += _learningRate * neuron.bias_delta * 1;
+                        neuron.bias += _momentum * neuron.bias_prevdelta;
+                        neuron.bias -= _decay * neuron.bias;
+                        neuron.bias_prevdelta = _learningRate * neuron.bias_delta * 1;
+                    }
+                    j++;
+                }
+                Inputs = processingLayer.GetEnumerator();
+            }
+        }
+
+        /// <summary>
+        /// Backward - Propagation 
+        /// </summary>
+        /// <param name="ExpectedResult">Expected output of Neural network</param>
+        private void BackProp(double[] ExpectedResult)
+        {   
             for (int i = 0; i < ExpectedResult.Length; i++)
             {
                 Neuron currNeuron = neuronLayers.Last<NeuronLayer>()[i];
-                currNeuron.deltaCalc(ExpectedResult[i] - currNeuron.value);
+                currNeuron.delta = (1 + currNeuron.activation) * (1 - currNeuron.activation) * (ExpectedResult[i] - currNeuron.activation);
             }
 
-            // -2 because lasone processed above.
+            // -2 because the last one processed above
             for (int i = neuronLayers.Count - 2; i >= 0; i--)
             {
                 NeuronLayer processingLayer = neuronLayers[i];
@@ -172,40 +217,10 @@ namespace NeuralNetworkStuff
                     double total = 0;
                     foreach (Neuron backLayerNeuron in backLayer)
                         total += backLayerNeuron.delta * backLayerNeuron.weights[j];
-                    processingNeuron.deltaCalc(total);
+                    processingNeuron.delta = (1 + processingNeuron.activation) * (1 - processingNeuron.activation) * total;
+                    processingNeuron.bias_delta = (1 + processingNeuron.activation) * (1 - processingNeuron.activation) * 1;
                 }
             }
-            // END Backward-Propagation 
-
-
-            IEnumerator Entries = LearningEntry.GetEnumerator();
-            for (int i = 0; i < neuronLayers.Count; i++)
-            {
-                NeuronLayer processingLayer = neuronLayers[i];
-                double entry;
-                foreach (Neuron neuron in processingLayer)
-                {
-                    int j = 0;
-                    while (Entries.MoveNext())
-                    {
-                        entry = Entries.Current.GetType() == typeof(Neuron) ? ((Neuron)Entries.Current).net_sum : (double)Entries.Current;
-                        neuron.newGradient[j] = (-1) * neuron.delta * entry;
-                        if (neuron.OldGradient[j] - neuron.newGradient[j] != 0)
-                            neuron.newStep[j] = neuron.newGradient[j] / (neuron.OldGradient[j] - neuron.newGradient[j]) * neuron.oldStep[j];
-                        else
-                        {
-                            neuron.newStep[j] = 0.001f;
-                            Console.WriteLine("BAM");
-                        }
-                        neuron.weights[j] += neuron.newStep[j];
-                        neuron.oldStep[j] = neuron.newStep[j];
-                        neuron.OldGradient[j] = neuron.newGradient[j];
-                        j++;
-                    }
-                }
-                Entries = processingLayer.GetEnumerator();
-            }
-
         }
 
         public void RandomizeWeights()
